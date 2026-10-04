@@ -1,0 +1,13 @@
+sku,producto,categoria,proveedor,costo_unitario,precio_venta,stock_actual,pedidos_clientes_pendientes,unidades_en_camino,fecha_llegada_en_camino,pedido_minimo,activo,historia_demo
+FUN-IP15-SIL,Funda silicona iPhone 15,fundas,shenzhen_case_factory,2.8,14.99,22,0,0,,100,si,"Poco stock, pero la demanda se esta cayendo (salio el iPhone 17), el proveedor tarda 21 dias y el pedido minimo es de 100."
+CAR-GAN-65,Cargador GaN 65W USB-C,cargadores,shenzhen_case_factory,11.5,39.99,38,4,0,,40,si,La demanda viene subiendo fuerte y el proveedor tarda 21 dias y a veces se atrasa.
+AUD-TWS-PRO,Audifonos inalambricos TWS Pro,audio,audiotech_mayorista,14,49.99,24,2,60,2026-10-02,30,si,"Stock bajo, pero ya hay 60 unidades en camino que llegan en 3 dias."
+CAB-USBC-1M,Cable USB-C a USB-C 1m,cables,cables_y_mas,1.2,8.99,55,3,0,,100,si,Producto estrella de alto volumen y demanda estable; con el stock actual alcanza para pocos dias.
+POP-GRIP-BAS,Soporte de agarre (grip) basico,accesorios,shenzhen_case_factory,0.9,6.99,480,0,0,,200,si,Sobrestock: hay mercancia para casi un ano y las ventas siguen bajando.
+AUD-GAMER-X,Audifonos gamer con microfono X,audio,audiotech_mayorista,42,99.99,19,0,0,,20,si,"Producto caro: vende ~1 al dia, pero hace 4 dias tuvo un pico raro de 34 unidades (viral o error). Ambiguo y caro."
+PROT-S24-VID,Protector de vidrio Galaxy S24,protectores,powerline_mexico,0.7,9.99,20,26,0,,100,si,Hay mas pedidos de clientes esperando (26) que stock (20): ya se esta quedando mal con clientes.
+POW-10K-SLIM,Bateria externa 10000mAh slim,baterias,powerline_mexico,9,29.99,26,1,0,,25,si,Demanda estable; el stock alcanza justo para lo que tarda el proveedor (10 dias).
+CAB-LIGHT-2M,Cable Lightning 2m,cables,cables_y_mas,1.5,9.99,16,0,0,,100,si,"Poco stock, pero la demanda va bajando (los iPhone nuevos son USB-C) y el proveedor entrega en 3 dias."
+SOP-AUTO-MAG,Soporte magnetico para auto,soportes,powerline_mexico,4.5,19.99,0,5,0,,30,si,"Agotado hace 6 dias: las ventas en cero NO son falta de demanda, es que no hay que vender."
+MIC-LAV-USBC,Microfono de solapa USB-C,audio,audiotech_mayorista,7,24.99,64,0,0,,20,si,Vendia ~2 al dia y de golpe lleva una semana en cero TENIENDO stock (posible publicacion caida o problema).
+FUN-S24U-PREM,Funda premium Galaxy S24 Ultra,fundas,shenzhen_case_factory,6.5,29.99,-5,0,0,,30,si,Dato roto a proposito: stock negativo (error de conteo). n8n debe frenarlo sin consultar a JEV.

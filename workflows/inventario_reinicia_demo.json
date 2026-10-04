@@ -1,0 +1,174 @@
+{
+  "name": "inventario_reinicia_demo",
+  "nodes": [
+    {
+      "id": "332a0f43-9f60-443b-a807-f29ef365e7b1",
+      "name": "inicio_manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "479e2329-06be-4cde-8407-adac1434cc4a",
+      "name": "reinicia_datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Regenera los datos de demo con fechas relativas a HOY (ventas hasta ayer) y prepara el borrado de la bitacora y las ordenes.\nconst HOY = new Date().toISOString().slice(0, 10);\nfunction generarDemo(HOY) {\n  const DIAS = 28;\n  function prng(seed) {\n    return function () {\n      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;\n      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);\n      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;\n      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n    };\n  }\n  function poisson(lambda, rnd) {\n    if (lambda <= 0) return 0;\n    const L = Math.exp(-lambda);\n    let k = 0, p = 1;\n    do { k++; p *= rnd(); } while (p > L);\n    return k - 1;\n  }\n  function sumarDias(iso, n) {\n    const d = new Date(iso + 'T12:00:00Z');\n    d.setUTCDate(d.getUTCDate() + n);\n    return d.toISOString().slice(0, 10);\n  }\n\n  const proveedores = [\n    { proveedor: 'shenzhen_case_factory', nombre: 'Shenzhen Case Factory', pais: 'China', tiempo_reposicion_dias: 21, entregas_a_tiempo_pct: 82, notas: 'Barato pero lento: envio maritimo y aduana' },\n    { proveedor: 'audiotech_mayorista', nombre: 'AudioTech Mayorista', pais: 'Estados Unidos', tiempo_reposicion_dias: 7, entregas_a_tiempo_pct: 91, notas: 'Distribuidor de audio' },\n    { proveedor: 'cables_y_mas', nombre: 'Cables y Mas Distribuidora', pais: 'Local', tiempo_reposicion_dias: 3, entregas_a_tiempo_pct: 98, notas: 'Rapido y confiable; vende por caja' },\n    { proveedor: 'powerline_mexico', nombre: 'PowerLine Mexico', pais: 'Mexico', tiempo_reposicion_dias: 10, entregas_a_tiempo_pct: 87, notas: 'Baterias, soportes y protectores' }\n  ];\n\n  // perfil(d): ventas esperadas el dia d (0 = hace 28 dias, 27 = ayer)\n  const catalogo = [\n    ['FUN-IP15-SIL', 'Funda silicona iPhone 15', 'fundas', 'shenzhen_case_factory', 2.8, 14.99, 22, 0, 0, null, 100,\n      'Poco stock, pero la demanda se esta cayendo (salio el iPhone 17), el proveedor tarda 21 dias y el pedido minimo es de 100.',\n      d => 5.5 - d * 0.17],\n    ['CAR-GAN-65', 'Cargador GaN 65W USB-C', 'cargadores', 'shenzhen_case_factory', 11.5, 39.99, 38, 4, 0, null, 40,\n      'La demanda viene subiendo fuerte y el proveedor tarda 21 dias y a veces se atrasa.',\n      d => 2 + d * 0.16],\n    ['AUD-TWS-PRO', 'Audifonos inalambricos TWS Pro', 'audio', 'audiotech_mayorista', 14, 49.99, 24, 2, 60, 3, 30,\n      'Stock bajo, pero ya hay 60 unidades en camino que llegan en 3 dias.',\n      () => 2.6],\n    ['CAB-USBC-1M', 'Cable USB-C a USB-C 1m', 'cables', 'cables_y_mas', 1.2, 8.99, 55, 3, 0, null, 100,\n      'Producto estrella de alto volumen y demanda estable; con el stock actual alcanza para pocos dias.',\n      () => 11],\n    ['POP-GRIP-BAS', 'Soporte de agarre (grip) basico', 'accesorios', 'shenzhen_case_factory', 0.9, 6.99, 480, 0, 0, null, 200,\n      'Sobrestock: hay mercancia para casi un ano y las ventas siguen bajando.',\n      d => 3.2 - d * 0.07],\n    ['AUD-GAMER-X', 'Audifonos gamer con microfono X', 'audio', 'audiotech_mayorista', 42, 99.99, 19, 0, 0, null, 20,\n      'Producto caro: vende ~1 al dia, pero hace 4 dias tuvo un pico raro de 34 unidades (viral o error). Ambiguo y caro.',\n      d => (d === 23 ? 34 : 1.1)],\n    ['PROT-S24-VID', 'Protector de vidrio Galaxy S24', 'protectores', 'powerline_mexico', 0.7, 9.99, 20, 26, 0, null, 100,\n      'Hay mas pedidos de clientes esperando (26) que stock (20): ya se esta quedando mal con clientes.',\n      () => 4.5],\n    ['POW-10K-SLIM', 'Bateria externa 10000mAh slim', 'baterias', 'powerline_mexico', 9, 29.99, 26, 1, 0, null, 25,\n      'Demanda estable; el stock alcanza justo para lo que tarda el proveedor (10 dias).',\n      () => 2.3],\n    ['CAB-LIGHT-2M', 'Cable Lightning 2m', 'cables', 'cables_y_mas', 1.5, 9.99, 16, 0, 0, null, 100,\n      'Poco stock, pero la demanda va bajando (los iPhone nuevos son USB-C) y el proveedor entrega en 3 dias.',\n      d => 2.4 - d * 0.05],\n    ['SOP-AUTO-MAG', 'Soporte magnetico para auto', 'soportes', 'powerline_mexico', 4.5, 19.99, 0, 5, 0, null, 30,\n      'Agotado hace 6 dias: las ventas en cero NO son falta de demanda, es que no hay que vender.',\n      d => (d >= 22 ? 0 : 3.4)],\n    ['MIC-LAV-USBC', 'Microfono de solapa USB-C', 'audio', 'audiotech_mayorista', 7, 24.99, 64, 0, 0, null, 20,\n      'Vendia ~2 al dia y de golpe lleva una semana en cero TENIENDO stock (posible publicacion caida o problema).',\n      d => (d >= 22 ? 0 : 2.1)],\n    ['FUN-S24U-PREM', 'Funda premium Galaxy S24 Ultra', 'fundas', 'shenzhen_case_factory', 6.5, 29.99, -5, 0, 0, null, 30,\n      'Dato roto a proposito: stock negativo (error de conteo). n8n debe frenarlo sin consultar a JEV.',\n      () => 1.4]\n  ];\n\n  const productos = catalogo.map(c => ({\n    sku: c[0], producto: c[1], categoria: c[2], proveedor: c[3],\n    costo_unitario: c[4], precio_venta: c[5], stock_actual: c[6],\n    pedidos_clientes_pendientes: c[7], unidades_en_camino: c[8],\n    fecha_llegada_en_camino: c[9] === null ? '' : sumarDias(HOY, c[9]),\n    pedido_minimo: c[10], activo: 'si', historia_demo: c[11]\n  }));\n\n  const rnd = prng(20260928);\n  const ventas = [];\n  for (const c of catalogo) {\n    for (let d = 0; d < DIAS; d++) {\n      const f = sumarDias(HOY, d - DIAS);\n      const dow = new Date(f + 'T12:00:00Z').getUTCDay();\n      const finde = (dow === 0 || dow === 6) ? 1.2 : 1;\n      const base = c[12](d);\n      const u = (c[0] === 'AUD-GAMER-X' && d === 23) ? 34 : (base === 0 ? 0 : poisson(Math.max(0, base) * finde, rnd));\n      ventas.push({ fecha: f, sku: c[0], unidades: u });\n    }\n  }\n\n  const COLUMNAS = {\n    productos: ['sku', 'producto', 'categoria', 'proveedor', 'costo_unitario', 'precio_venta', 'stock_actual',\n      'pedidos_clientes_pendientes', 'unidades_en_camino', 'fecha_llegada_en_camino', 'pedido_minimo', 'activo', 'historia_demo'],\n    ventas: ['fecha', 'sku', 'unidades'],\n    proveedores: ['proveedor', 'nombre', 'pais', 'tiempo_reposicion_dias', 'entregas_a_tiempo_pct', 'notas'],\n    decisiones: ['fecha', 'corrida_id', 'sku', 'producto', 'datos_enviados_a_jev', 'decision_jev', 'confianza_jev',\n      'probabilidades_jev', 'urgencia_jev', 'riesgo_quiebre_jev', 'demanda_creciente_jev', 'riesgo_sobrestock_jev',\n      'accion_n8n', 'decidido_por', 'motivo_candado', 'cantidad_sugerida', 'costo_orden', 'modelo', 'tokens', 'creditos_restantes'],\n    ordenes_compra: ['fecha', 'corrida_id', 'sku', 'producto', 'proveedor', 'cantidad', 'costo_unitario', 'costo_total',\n      'prioridad', 'estado', 'decision_origen']\n  };\n  const filas = (tabla, datos) => [COLUMNAS[tabla]].concat(datos.map(r => COLUMNAS[tabla].map(k => r[k])));\n\n  return {\n    COLUMNAS, proveedores, productos, ventas,\n    valores: [\n      { range: 'productos!A1', values: filas('productos', productos) },\n      { range: 'ventas!A1', values: filas('ventas', ventas) },\n      { range: 'proveedores!A1', values: filas('proveedores', proveedores) },\n      { range: 'decisiones!A1', values: [COLUMNAS.decisiones] },\n      { range: 'ordenes_compra!A1', values: [COLUMNAS.ordenes_compra] }\n    ]\n  };\n}\nconst demo = generarDemo(HOY);\nreturn [{ json: {\n  hoy: HOY,\n  cuerpo_borra: { ranges: ['productos!A2:M', 'ventas!A2:C', 'proveedores!A2:F', 'decisiones!A2:T', 'ordenes_compra!A2:K'] },\n  cuerpo_valores: { valueInputOption: 'RAW', data: demo.valores }\n} }];"
+      }
+    },
+    {
+      "id": "803abaf6-982f-4c25-93b9-fb973702a918",
+      "name": "borra_datos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('config').first().json.sheet_id }}/values:batchClear",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.cuerpo_borra) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "56de69a1-63a4-4424-9960-2c7256aeaa18",
+      "name": "escribe_datos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('config').first().json.sheet_id }}/values:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('reinicia_datos').first().json.cuerpo_valores) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "52f31c73-9b6c-48fb-b5ec-932cd4f5dd7d",
+      "name": "Sticky Note 52f31c73",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "content": "## inventario_reinicia_demo\nBoton de reinicio de la demo. BORRA las pestanas decisiones y ordenes_compra (deja los encabezados) y vuelve a escribir productos, ventas y proveedores con los datos de demo, con las fechas relativas a HOY (ventas hasta ayer). Se corre a mano antes de cada demo. No consulta a JEV: no gasta creditos.",
+        "color": 3,
+        "width": 700,
+        "height": 200
+      }
+    },
+    {
+      "id": "config-0001",
+      "name": "config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        110,
+        190
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-0",
+              "name": "sheet_id",
+              "value": "PEGA_AQUI_EL_ID_DE_TU_HOJA_DE_GOOGLE_SHEETS",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "inicio_manual": {
+      "main": [
+        [
+          {
+            "node": "config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "reinicia_datos": {
+      "main": [
+        [
+          {
+            "node": "borra_datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "borra_datos": {
+      "main": [
+        [
+          {
+            "node": "escribe_datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "config": {
+      "main": [
+        [
+          {
+            "node": "reinicia_datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

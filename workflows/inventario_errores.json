@@ -1,0 +1,135 @@
+{
+  "name": "inventario_errores",
+  "nodes": [
+    {
+      "id": "d8471391-a03f-4b8a-8d9e-845eafdac615",
+      "name": "escucha_errores",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "347aa738-6c25-4d93-9e44-2e93a8842ff1",
+      "name": "arma_alerta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Arma la alerta en espanol: que flujo fallo, en que nodo, el error, la hora y una pista de diagnostico.\nfunction armarAlerta(e, ahoraISO) {\n  const esc = s => String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const ex = (e && e.execution) || {};\n  const wf = (e && e.workflow) || {};\n  const err = ex.error || {};\n  const flujo = wf.name || 'desconocido';\n  const nodo = (err.node && err.node.name) || ex.lastNodeExecuted || 'desconocido';\n  const mensaje = (String(err.message || 'sin mensaje') + (err.description ? ' | ' + err.description : '')).replace(/\\s+/g, ' ').slice(0, 400);\n  const t = (nodo + ' ' + mensaje).toLowerCase();\n\n  let pista = 'Abre la ejecucion en n8n y mira el nodo que fallo.';\n  if (/insufficient_credits|\\b402\\b/.test(t)) pista = 'Se acabaron los creditos de JEV (o no alcanzan). Recarga en jevmodel.org/pricing.';\n  else if (/\\b401\\b|unauthorized|invalid api key|missing or invalid api key|authentication/.test(t) && /jev/.test(t)) pista = 'La llave de JEV es invalida o vencio. Renueva la credencial \"jev\" en n8n > Credentials.';\n  else if (/pregunta_a_jev|jevmodel/.test(t)) pista = 'Fallo la llamada a JEV. Revisa la credencial \"jev\" en n8n y si quedan creditos.';\n  else if (/\\b429\\b|too many requests|rate limit/.test(t)) pista = 'Demasiadas peticiones seguidas. Espera un minuto y vuelve a correr.';\n  else if (/lee_hoja|guarda_bitacora|crea_ordenes|sheets\\.googleapis|spreadsheet|google/.test(t)) pista = 'Fallo Google Sheets. Revisa que la hoja jev_inventario_demo exista, que sus pestanas no cambiaron de nombre y que la credencial \"Google Sheets account\" siga viva.';\n  else if (/telegram|chat not found|bot was blocked/.test(t)) pista = 'Fallo Telegram. Revisa el bot tu bot de Telegram (dale Iniciar) y la credencial tu credencial de Telegram.';\n  else if (/timeout|etimedout|econnreset|econnrefused|socket hang up/.test(t)) pista = 'Se corto la conexion o tardo demasiado. Vuelve a correr; si se repite, revisa el servicio.';\n  else if (/connection cannot be established|incorrect host|enotfound|getaddrinfo/.test(t)) pista = 'No se pudo conectar: la direccion (URL) del servicio esta mal escrita o el servicio no existe. Revisa la URL del nodo que fallo.';\n  else if (/typeerror|referenceerror|syntaxerror|cannot read properties|is not defined/.test(t)) pista = 'Error de codigo en un nodo Code. Abre el nodo senalado y revisa la linea.';\n  else if (/pestana .* vacia|no hay productos activos|no hay ningun producto/.test(t)) pista = 'La hoja esta vacia o sin productos activos. Corre inventario_reinicia_demo.';\n\n  let texto = '<b>ALERTA · Decide Inventario</b>\\n';\n  texto += 'Fallo el flujo <b>' + esc(flujo) + '</b> en el nodo <b>' + esc(nodo) + '</b>\\n\\n';\n  texto += 'Error: ' + esc(mensaje) + '\\n\\n';\n  texto += 'Pista: ' + esc(pista) + '\\n';\n  texto += '\\nSi fue durante un analisis, puede que el resumen de decisiones no haya llegado: revisa la pestana decisiones de la hoja.\\n';\n  texto += '\\nHora: ' + esc(ahoraISO);\n  if (ex.url) texto += '\\nEjecucion: ' + esc(ex.url);\n  return { texto, flujo, nodo, mensaje, pista };\n}\nreturn [{ json: armarAlerta($input.first().json, new Date().toISOString()) }];"
+      }
+    },
+    {
+      "id": "bd9814f7-fc53-4cc6-b811-5ded02c3ca15",
+      "name": "avisa_error_telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('config').first().json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "008392e0-7517-4d5c-8e52-c9288521b421",
+      "name": "Sticky Note 008392e0",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "content": "## inventario_errores\nError workflow de Decide Inventario (capa 3 de robustez). Se conecta desde Settings > Error Workflow de inventario_jev_decide (y de inventario_reinicia_demo). Cuando un flujo falla arma un aviso en espanol con el flujo, el nodo, el error, la hora, una pista y el link de la ejecucion, y lo manda por Telegram. Usa solo la credencial de Telegram: sigue avisando aunque la llave de JEV o la de Google esten rotas.",
+        "color": 3,
+        "width": 620,
+        "height": 200
+      }
+    },
+    {
+      "id": "config-0001",
+      "name": "config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        110,
+        190
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-0",
+              "name": "chat_id",
+              "value": "PEGA_AQUI_TU_CHAT_ID_DE_TELEGRAM",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "escucha_errores": {
+      "main": [
+        [
+          {
+            "node": "config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "arma_alerta": {
+      "main": [
+        [
+          {
+            "node": "avisa_error_telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "config": {
+      "main": [
+        [
+          {
+            "node": "arma_alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

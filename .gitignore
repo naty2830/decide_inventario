@@ -1,0 +1,12 @@
+# Secretos: nunca al repositorio
+.env
+.env.*
+*.local.*
+.mcp.json
+SECRETS*
+config.local.json
+
+# Sistema
+.DS_Store
+Thumbs.db
+node_modules/

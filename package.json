@@ -1,0 +1,12 @@
+{
+  "name": "decide_inventario",
+  "version": "0.1.0",
+  "description": "Inventario donde un modelo decide por contexto y n8n calcula y ejecuta. Proyecto 01 de Taller Pyme.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "test": "node tests/prueba_logica.js",
+    "datos": "node scripts/datos_demo.js"
+  },
+  "engines": { "node": ">=18" }
+}

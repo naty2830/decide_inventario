@@ -1,0 +1,559 @@
+{
+  "name": "inventario_jev_decide",
+  "nodes": [
+    {
+      "id": "8eab6e7e-aec0-4130-952c-b0178349d975",
+      "name": "panel_inventario",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "formTitle": "Decide Inventario: analizar ahora",
+        "formDescription": "n8n calcula las variables de cada producto, JEV decide que hacer y el resultado llega por Telegram. Deja el SKU vacio para analizar todo el inventario (cada producto gasta una consulta a JEV).",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "solo_sku",
+              "fieldLabel": "Solo este SKU (opcional)",
+              "fieldType": "text",
+              "placeholder": "ej. CAR-GAN-65",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {
+          "path": "inventario-jev",
+          "buttonLabel": "Analizar",
+          "appendAttribution": false,
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Listo: JEV esta analizando el inventario. El resultado llega por Telegram en un minuto."
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "bfbb24a3-cfd5-4fd6-a33b-6a4bb08892df",
+      "name": "lee_hoja",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('config').first().json.sheet_id }}/values:batchGet?ranges=productos&ranges=ventas&ranges=proveedores&ranges=ordenes_compra&valueRenderOption=UNFORMATTED_VALUE",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "153e78f5-8c92-40ea-9edb-16c98334f4d1",
+      "name": "calcula_variables",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// n8n CALCULA: lee la hoja, frena los datos rotos y calcula las variables de cada producto. JEV solo decide.\nconst HOY = new Date().toISOString().slice(0, 10);\nlet soloSku = '';\ntry { soloSku = $('panel_inventario').first().json.solo_sku || ''; } catch (e) { soloSku = ''; }\nfunction calcularProductos(hojas, HOY, soloSku) {\n  const DIAS = 28;\n  const MS = 86400000;\n  const redondea = (x, d) => (x === null || x === undefined || !isFinite(x)) ? null : Math.round(x * Math.pow(10, d)) / Math.pow(10, d);\n  const num = v => (v === '' || v === null || v === undefined) ? NaN : Number(v);\n  const diaISO = v => {\n    if (typeof v === 'number') return new Date(Math.round((v - 25569) * MS)).toISOString().slice(0, 10); // serial de Sheets\n    return String(v || '').trim().slice(0, 10);\n  };\n  const hoyMs = Date.parse(HOY + 'T00:00:00Z');\n  const fechaDia = i => new Date(hoyMs - (DIAS - i) * MS).toISOString().slice(0, 10); // i=0 hace 28 dias, i=27 ayer\n\n  const proveedores = {};\n  for (const p of hojas.proveedores || []) proveedores[String(p.proveedor || '').trim()] = p;\n\n  const ventasPorSku = {};\n  let ultimaVenta = '';\n  for (const v of hojas.ventas || []) {\n    const sku = String(v.sku || '').trim();\n    const f = diaISO(v.fecha);\n    if (!sku || !f) continue;\n    if (f > ultimaVenta) ultimaVenta = f;\n    (ventasPorSku[sku] = ventasPorSku[sku] || {})[f] = ((ventasPorSku[sku] || {})[f] || 0) + num(v.unidades);\n  }\n\n  const ordenesAbiertas = {};\n  for (const o of hojas.ordenes_compra || []) {\n    const estado = String(o.estado || '').trim().toLowerCase();\n    if (estado === 'borrador' || estado === 'enviada') {\n      const sku = String(o.sku || '').trim();\n      ordenesAbiertas[sku] = (ordenesAbiertas[sku] || 0) + (num(o.cantidad) || 0);\n    }\n  }\n\n  const filtro = String(soloSku || '').trim().toUpperCase();\n  const salida = [];\n\n  for (const p of hojas.productos || []) {\n    const sku = String(p.sku || '').trim();\n    if (!sku) continue;\n    if (String(p.activo || '').trim().toLowerCase() !== 'si') continue;\n    if (filtro && sku.toUpperCase() !== filtro) continue;\n\n    const prov = proveedores[String(p.proveedor || '').trim()];\n    const costo = num(p.costo_unitario), precio = num(p.precio_venta);\n    const stock = num(p.stock_actual), pendientes = num(p.pedidos_clientes_pendientes);\n    const enCamino = num(p.unidades_en_camino) || 0, moq = num(p.pedido_minimo);\n    const llegada = diaISO(p.fecha_llegada_en_camino);\n    const ventasSku = ventasPorSku[sku] || {};\n    const diasConDato = Object.keys(ventasSku).filter(f => f >= fechaDia(0) && f < HOY).length;\n\n    // --- candado de datos: si algo es imposible o falta, NO se consulta a JEV ---\n    const problemas = [];\n    if (!isFinite(stock)) problemas.push('stock_actual vacio o no numerico');\n    else if (stock < 0) problemas.push('stock_actual negativo (' + stock + ')');\n    if (!isFinite(pendientes) || pendientes < 0) problemas.push('pedidos_clientes_pendientes invalido');\n    if (!isFinite(enCamino) || enCamino < 0) problemas.push('unidades_en_camino invalido');\n    if (enCamino > 0 && !/^\\d{4}-\\d{2}-\\d{2}$/.test(llegada)) problemas.push('hay unidades en camino sin fecha de llegada');\n    if (!isFinite(costo) || costo <= 0) problemas.push('costo_unitario invalido');\n    if (!isFinite(precio) || precio <= 0) problemas.push('precio_venta invalido');\n    if (!isFinite(moq) || moq <= 0) problemas.push('pedido_minimo invalido');\n    if (!prov) problemas.push('proveedor \"' + p.proveedor + '\" no existe en la pestana proveedores');\n    else if (!(num(prov.tiempo_reposicion_dias) > 0)) problemas.push('tiempo_reposicion_dias invalido para ' + p.proveedor);\n    if (diasConDato < 14) problemas.push('ventas desactualizadas o incompletas: solo ' + diasConDato + ' de los ultimos 28 dias tienen datos (ultima venta registrada: ' + (ultimaVenta || 'ninguna') + ')');\n    for (const f of Object.keys(ventasSku)) if (!(ventasSku[f] >= 0)) { problemas.push('hay ventas negativas o no numericas el ' + f); break; }\n\n    const base = {\n      sku, producto: String(p.producto || sku), proveedor: String(p.proveedor || ''),\n      costo_unitario: costo, orden_abierta_unidades: ordenesAbiertas[sku] || 0\n    };\n    if (problemas.length) {\n      salida.push(Object.assign(base, { valido: false, motivo_invalido: problemas.join('; ') }));\n      continue;\n    }\n\n    // --- metricas de ventas ---\n    const serie = [];\n    for (let i = 0; i < DIAS; i++) serie.push(ventasSku[fechaDia(i)] || 0);\n    const suma = a => a.reduce((s, x) => s + x, 0);\n    const v7 = suma(serie.slice(-7)) / 7;\n    const vPrev21 = suma(serie.slice(0, 21)) / 21;\n    const v28 = suma(serie) / DIAS;\n    const ordenada = serie.slice().sort((a, b) => a - b);\n    const mediana = (ordenada[13] + ordenada[14]) / 2;\n    const maximo = Math.max.apply(null, serie);\n    const diaMax = fechaDia(serie.indexOf(maximo));\n    let cerosAlFinal = 0;\n    for (let i = serie.length - 1; i >= 0 && serie[i] === 0; i--) cerosAlFinal++;\n    const tendencia = vPrev21 > 0 ? (v7 - vPrev21) / vPrev21 * 100 : null;\n\n    // Ritmo que usa n8n para calcular cantidades (determinista, documentado):\n    //  - si esta agotado y lleva dias en cero: el ritmo de ANTES de agotarse (la demanda no desaparecio)\n    //  - si hay un pico aislado (>= 5 veces la mediana): promedio de 28 dias SIN el dia del pico\n    //  - si no: 60% ultima semana + 40% las 3 semanas anteriores\n    let ritmo, criterioRitmo;\n    const picoAislado = maximo >= 5 * Math.max(mediana, 1);\n    if (stock <= 0 && cerosAlFinal >= 2) {\n      const antes = serie.slice(Math.max(0, DIAS - cerosAlFinal - 14), DIAS - cerosAlFinal);\n      ritmo = antes.length ? suma(antes) / antes.length : v28;\n      criterioRitmo = 'rate before the stockout (last ' + antes.length + ' days with stock)';\n    } else if (picoAislado) {\n      ritmo = (suma(serie) - maximo) / (DIAS - 1);\n      criterioRitmo = '28-day average excluding the spike day';\n    } else {\n      ritmo = 0.6 * v7 + 0.4 * vPrev21;\n      criterioRitmo = '60% last 7 days + 40% previous 21 days';\n    }\n\n    const reposicion = num(prov.tiempo_reposicion_dias);\n    const disponible = stock - pendientes;\n    const diasLlegada = enCamino > 0 ? Math.round((Date.parse(llegada + 'T00:00:00Z') - hoyMs) / MS) : null;\n    const llegaAntes = enCamino > 0 && diasLlegada <= reposicion;\n    const coberturaActual = v7 > 0 ? disponible / v7 : null;\n    const coberturaConCamino = ritmo > 0 ? (disponible + enCamino) / ritmo : null;\n    const demandaReposicion = ritmo * reposicion;\n    const necesarias = Math.ceil(ritmo * (reposicion + 14) - (disponible + enCamino) - (ordenesAbiertas[sku] || 0));\n    const cantidad = Math.max(necesarias, moq);\n    const diasTrasPedido = ritmo > 0 ? (disponible + enCamino + cantidad) / ritmo : null;\n\n    const estado = {\n      store: 'Small online store selling phone accessories. The inventory manager wants a decision for ONE product today.',\n      analysis_date: HOY,\n      product: {\n        sku, name: base.producto, category: String(p.categoria || ''),\n        unit_cost_usd: costo, unit_price_usd: precio,\n        gross_margin_pct: redondea((precio - costo) / precio * 100, 0)\n      },\n      stock: {\n        on_hand: stock,\n        pending_customer_orders_waiting: pendientes,\n        available_after_pending_orders: disponible,\n        incoming_units_from_supplier: enCamino,\n        incoming_arrives_in_days: diasLlegada,\n        open_purchase_order_units_not_yet_shipped: ordenesAbiertas[sku] || 0,\n        inventory_value_at_cost_usd: redondea(Math.max(stock, 0) * costo, 2)\n      },\n      sales: {\n        daily_units_last_28_days_oldest_first: serie,\n        avg_per_day_last_7_days: redondea(v7, 2),\n        avg_per_day_previous_21_days: redondea(vPrev21, 2),\n        trend_last_7_vs_previous_21_pct: redondea(tendencia, 0),\n        median_day: mediana,\n        max_single_day: maximo,\n        max_day_date: diaMax,\n        consecutive_zero_sales_days_until_yesterday: cerosAlFinal\n      },\n      supplier: {\n        name: String(prov.nombre || prov.proveedor), country: String(prov.pais || ''),\n        lead_time_days: reposicion,\n        on_time_delivery_pct: num(prov.entregas_a_tiempo_pct),\n        minimum_order_units: moq\n      },\n      planning_math_by_n8n: {\n        planning_rate_units_per_day: redondea(ritmo, 2),\n        planning_rate_method: criterioRitmo,\n        days_of_cover_at_last_7_days_rate: redondea(coberturaActual, 1),\n        days_of_cover_incl_incoming_at_planning_rate: redondea(coberturaConCamino, 1),\n        incoming_arrives_before_a_new_order_could: enCamino > 0 ? llegaAntes : null,\n        expected_demand_during_lead_time_units: redondea(demandaReposicion, 0),\n        units_needed_to_cover_lead_time_plus_14_days: Math.max(0, necesarias),\n        order_size_if_ordering_today_units: cantidad,\n        order_cost_if_ordering_today_usd: redondea(cantidad * costo, 2),\n        days_of_stock_after_that_order: redondea(diasTrasPedido, 0)\n      }\n    };\n\n    salida.push(Object.assign(base, {\n      valido: true, motivo_invalido: '',\n      cantidad_sugerida: cantidad, costo_orden: redondea(cantidad * costo, 2),\n      resumen_hechos: {\n        stock, pendientes, en_camino: enCamino, llegada_dias: diasLlegada,\n        v7: redondea(v7, 1), tendencia: redondea(tendencia, 0),\n        cobertura: redondea(coberturaActual, 0), reposicion, ceros: cerosAlFinal,\n        pico: picoAislado ? maximo : null, dias_tras_pedido: redondea(diasTrasPedido, 0)\n      },\n      estado\n    }));\n  }\n  return salida;\n}\nfunction preguntasJev() {\n  return {\n    decision: {\n      type: 'choice',\n      instructions: 'You are the inventory planner of this store. Decide what to do with this product today. Low stock alone does NOT mean reorder: weigh the demand trend, customers already waiting, incoming stock, supplier lead time and reliability, the minimum order size, the risk of excess inventory and any anomaly in the sales data.',\n      criteria: {\n        REORDER: 'Place a normal replenishment order now: stock will run out around or before a new order could arrive, demand is healthy, and the order will not leave excessive inventory.',\n        PRIORITIZE: 'Urgent replenishment that must be handled first today: customers are already waiting or a stockout is imminent or already happening while demand is real, so waiting would lose sales or customers.',\n        WAIT: 'Do not order now: available plus incoming stock covers demand until a later order could arrive, or demand is falling so an order would likely create excess stock.',\n        ALERT: 'No purchase, but a person should look at it: excess inventory tying up money, or abnormal sales behaviour while stock is available (for example sales suddenly stopped).',\n        HUMAN_REVIEW: 'Ambiguous or high-risk: signals conflict, demand may be a one-off spike or a data error, or an expensive order would rest on uncertain demand. A person must decide before buying.'\n      }\n    },\n    urgency: {\n      type: 'score',\n      instructions: 'How urgent is it to act on this product?',\n      criteria: ['none: nothing to do this week', 'low: review within the week', 'high: act within 1-2 days', 'critical: act today, sales or customers are being lost']\n    },\n    stockout_risk: {\n      type: 'noul',\n      instructions: 'Will this product be unable to serve customers before a new order placed today could arrive (considering customers already waiting and incoming units)?'\n    },\n    real_demand_growth: {\n      type: 'noul',\n      instructions: 'Is genuine customer demand for this product growing, and not just a one-off spike, a data error or an effect of being out of stock?'\n    },\n    overstock_risk: {\n      type: 'noul',\n      instructions: 'If the store placed the order described in planning_math_by_n8n today, would it likely end up with excess inventory (well over 60 days of sales) or money tied up in slow stock?'\n    }\n  };\n}\nconst resp = $input.first().json;\nconst hojas = {};\nfor (const vr of (resp.valueRanges || [])) {\n  const nombre = String(vr.range || '').split('!')[0].replace(/'/g, '');\n  const filas = vr.values || [];\n  const enc = (filas[0] || []).map(h => String(h).trim());\n  hojas[nombre] = filas.slice(1).filter(f => f.some(c => c !== '' && c !== null && c !== undefined)).map(f => {\n    const o = {}; enc.forEach((h, i) => { o[h] = f[i] === undefined ? '' : f[i]; }); return o;\n  });\n}\nfor (const t of ['productos', 'ventas', 'proveedores']) {\n  if (!hojas[t] || !hojas[t].length) throw new Error('La pestana ' + t + ' de la hoja jev_inventario_demo esta vacia o no existe.');\n}\nconst calc = calcularProductos(hojas, HOY, soloSku);\nif (!calc.length) throw new Error(soloSku ? 'No hay ningun producto activo con el sku ' + soloSku : 'No hay productos activos en la hoja.');\nconst corrida_id = HOY + '-' + $execution.id;\nconst fecha_corrida = new Date().toISOString();\nconst preguntas = preguntasJev();\nreturn calc.map(c => ({ json: Object.assign(c, { corrida_id, fecha_corrida, consulta: c.valido ? { model: 'jev-1.13.0', state: c.estado, questions: preguntas } : null }) }));"
+      }
+    },
+    {
+      "id": "8557e5b1-9568-4a1d-a855-29223014e34e",
+      "name": "datos_validos",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valido }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e40b3040-7c16-4577-a2e1-48a7c019a6f0",
+      "name": "pregunta_a_jev",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://jevmodel.org/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.corrida_id }}-{{ $json.sku }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.consulta) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 4500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6e3defe4-4cf5-4f01-91d1-ff2698d2075d",
+      "name": "interpreta_jev",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// n8n VALIDA la decision de JEV con candados y decide que se ejecuta. Nunca inventa acciones.\nfunction interpretarDecision(calc, r, contexto) {\n  const MENU = ['REORDER', 'PRIORITIZE', 'WAIT', 'ALERT', 'HUMAN_REVIEW'];\n  const ACCION = { REORDER: 'CREA_ORDEN', PRIORITIZE: 'CREA_ORDEN_URGENTE', WAIT: 'SOLO_REGISTRA', ALERT: 'AVISA_ALERTA', HUMAN_REVIEW: 'PIDE_REVISION' };\n  const CONFIANZA_MINIMA = 0.6;\n  const r2 = x => (typeof x === 'number' && isFinite(x)) ? Math.round(x * 100) / 100 : '';\n\n  const fila = {\n    fecha: contexto.fecha, corrida_id: contexto.corrida_id, sku: calc.sku, producto: calc.producto,\n    datos_enviados_a_jev: calc.valido ? JSON.stringify(calc.estado) : '',\n    decision_jev: '', confianza_jev: '', probabilidades_jev: '', urgencia_jev: '',\n    riesgo_quiebre_jev: '', demanda_creciente_jev: '', riesgo_sobrestock_jev: '',\n    accion_n8n: '', decidido_por: '', motivo_candado: '',\n    cantidad_sugerida: '', costo_orden: '', modelo: '', tokens: '', creditos_restantes: ''\n  };\n\n  if (!calc.valido) {\n    fila.decision_jev = 'NO_CONSULTADO';\n    fila.accion_n8n = 'PIDE_REVISION';\n    fila.decidido_por = 'candado_datos';\n    fila.motivo_candado = 'Datos invalidos, no se gasto consulta a JEV: ' + calc.motivo_invalido;\n    return { fila, orden: null, calc, final: 'HUMAN_REVIEW' };\n  }\n\n  const ok = r && r.statusCode === 200 && r.body && r.body.answers && r.body.answers.decision;\n  let final;\n  if (!ok) {\n    const crudo = (r && r.statusCode) ? ('HTTP ' + r.statusCode) : ((r && r.error && (r.error.message || r.error)) || 'sin respuesta');\n    const causa = /insufficient_credits/.test(String(crudo)) ? 'HTTP 402: JEV dice que no hay creditos suficientes'\n      : /authentication_error|invalid api key|\\b401\\b/i.test(String(crudo)) ? 'HTTP 401: la llave de JEV falta o no es valida; revisar la credencial \"jev\" en n8n'\n      : /timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(String(crudo)) ? 'JEV tardo demasiado o se corto la conexion'\n      : /\\b5\\d\\d\\b/.test(String(crudo)) ? 'JEV tuvo una falla temporal de su lado (' + (String(crudo).match(/\\b5\\d\\d\\b/) || [''])[0] + ')'\n      : crudo;\n    fila.decision_jev = 'SIN_RESPUESTA';\n    fila.decidido_por = 'fallback';\n    fila.motivo_candado = 'JEV no respondio (' + String(causa).slice(0, 200) + '). Por seguridad se pide revision humana.';\n    final = 'HUMAN_REVIEW';\n  } else {\n    const a = r.body.answers;\n    const d = a.decision;\n    fila.decision_jev = d.choice;\n    fila.confianza_jev = r2(d.confidence);\n    fila.probabilidades_jev = JSON.stringify(d.probabilities || {});\n    fila.urgencia_jev = (a.urgency && typeof a.urgency.score === 'number') ? r2(a.urgency.score + 1) : '';\n    fila.riesgo_quiebre_jev = a.stockout_risk ? r2(a.stockout_risk.noul) : '';\n    fila.demanda_creciente_jev = a.real_demand_growth ? r2(a.real_demand_growth.noul) : '';\n    fila.riesgo_sobrestock_jev = a.overstock_risk ? r2(a.overstock_risk.noul) : '';\n    fila.modelo = r.body.model || '';\n    fila.tokens = (r.body.usage && r.body.usage.input_tokens) || '';\n    fila.creditos_restantes = (r.headers && (r.headers['x-credits-remaining'] || r.headers['x-tokens-remaining'])) || '';\n    fila.decidido_por = 'jev';\n    final = d.choice;\n    if (MENU.indexOf(final) < 0) {\n      fila.decidido_por = 'candado';\n      fila.motivo_candado = 'JEV devolvio una opcion fuera del menu (' + final + ').';\n      final = 'HUMAN_REVIEW';\n    } else if (!(d.confidence >= CONFIANZA_MINIMA)) {\n      const pctConf = Math.round((d.confidence || 0) * 100);\n      if (final === 'REORDER' || final === 'PRIORITIZE') {\n        fila.decidido_por = 'candado';\n        fila.motivo_candado = 'JEV eligio ' + final + ' con solo ' + pctConf + '% de confianza (minimo ' + (CONFIANZA_MINIMA * 100) + '% para gastar dinero). No se compra: lo decide una persona.';\n        final = 'HUMAN_REVIEW';\n      } else {\n        fila.motivo_candado = 'Confianza baja (' + pctConf + '%): decision de JEV mostrada tal cual porque no gasta dinero.';\n      }\n    }\n  }\n\n  let accion = ACCION[final];\n  let orden = null;\n  if (final === 'REORDER' || final === 'PRIORITIZE') {\n    if (calc.orden_abierta_unidades > 0) {\n      accion = 'NO_DUPLICA_ORDEN';\n      fila.decidido_por = 'candado';\n      fila.motivo_candado = 'JEV pidio ' + final + ', pero ya hay una orden abierta de ' + calc.orden_abierta_unidades + ' unidades de este producto. No se duplica.';\n    } else {\n      fila.cantidad_sugerida = calc.cantidad_sugerida;\n      fila.costo_orden = calc.costo_orden;\n      orden = {\n        fecha: contexto.fecha, corrida_id: contexto.corrida_id, sku: calc.sku, producto: calc.producto,\n        proveedor: calc.proveedor, cantidad: calc.cantidad_sugerida, costo_unitario: calc.costo_unitario,\n        costo_total: calc.costo_orden, prioridad: final === 'PRIORITIZE' ? 'alta' : 'normal', estado: 'borrador',\n        decision_origen: final + ' ' + Math.round((fila.confianza_jev || 0) * 100) + '% (' + fila.decidido_por + ')'\n      };\n    }\n  }\n  fila.accion_n8n = accion;\n  return { fila, orden, calc, final };\n}\nconst calc = $('datos_validos').item.json;\nreturn { json: interpretarDecision(calc, $json, { fecha: calc.fecha_corrida, corrida_id: calc.corrida_id }) };"
+      }
+    },
+    {
+      "id": "a810d992-84b8-4d05-a3a2-68166940832b",
+      "name": "junta_resultados",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "4dffe967-ac21-4e65-8ed3-35b3ab81dbf5",
+      "name": "frena_dato_invalido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Candado de datos: el producto tiene datos imposibles o incompletos. No se gasta consulta a JEV.\nfunction interpretarDecision(calc, r, contexto) {\n  const MENU = ['REORDER', 'PRIORITIZE', 'WAIT', 'ALERT', 'HUMAN_REVIEW'];\n  const ACCION = { REORDER: 'CREA_ORDEN', PRIORITIZE: 'CREA_ORDEN_URGENTE', WAIT: 'SOLO_REGISTRA', ALERT: 'AVISA_ALERTA', HUMAN_REVIEW: 'PIDE_REVISION' };\n  const CONFIANZA_MINIMA = 0.6;\n  const r2 = x => (typeof x === 'number' && isFinite(x)) ? Math.round(x * 100) / 100 : '';\n\n  const fila = {\n    fecha: contexto.fecha, corrida_id: contexto.corrida_id, sku: calc.sku, producto: calc.producto,\n    datos_enviados_a_jev: calc.valido ? JSON.stringify(calc.estado) : '',\n    decision_jev: '', confianza_jev: '', probabilidades_jev: '', urgencia_jev: '',\n    riesgo_quiebre_jev: '', demanda_creciente_jev: '', riesgo_sobrestock_jev: '',\n    accion_n8n: '', decidido_por: '', motivo_candado: '',\n    cantidad_sugerida: '', costo_orden: '', modelo: '', tokens: '', creditos_restantes: ''\n  };\n\n  if (!calc.valido) {\n    fila.decision_jev = 'NO_CONSULTADO';\n    fila.accion_n8n = 'PIDE_REVISION';\n    fila.decidido_por = 'candado_datos';\n    fila.motivo_candado = 'Datos invalidos, no se gasto consulta a JEV: ' + calc.motivo_invalido;\n    return { fila, orden: null, calc, final: 'HUMAN_REVIEW' };\n  }\n\n  const ok = r && r.statusCode === 200 && r.body && r.body.answers && r.body.answers.decision;\n  let final;\n  if (!ok) {\n    const crudo = (r && r.statusCode) ? ('HTTP ' + r.statusCode) : ((r && r.error && (r.error.message || r.error)) || 'sin respuesta');\n    const causa = /insufficient_credits/.test(String(crudo)) ? 'HTTP 402: JEV dice que no hay creditos suficientes'\n      : /authentication_error|invalid api key|\\b401\\b/i.test(String(crudo)) ? 'HTTP 401: la llave de JEV falta o no es valida; revisar la credencial \"jev\" en n8n'\n      : /timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(String(crudo)) ? 'JEV tardo demasiado o se corto la conexion'\n      : /\\b5\\d\\d\\b/.test(String(crudo)) ? 'JEV tuvo una falla temporal de su lado (' + (String(crudo).match(/\\b5\\d\\d\\b/) || [''])[0] + ')'\n      : crudo;\n    fila.decision_jev = 'SIN_RESPUESTA';\n    fila.decidido_por = 'fallback';\n    fila.motivo_candado = 'JEV no respondio (' + String(causa).slice(0, 200) + '). Por seguridad se pide revision humana.';\n    final = 'HUMAN_REVIEW';\n  } else {\n    const a = r.body.answers;\n    const d = a.decision;\n    fila.decision_jev = d.choice;\n    fila.confianza_jev = r2(d.confidence);\n    fila.probabilidades_jev = JSON.stringify(d.probabilities || {});\n    fila.urgencia_jev = (a.urgency && typeof a.urgency.score === 'number') ? r2(a.urgency.score + 1) : '';\n    fila.riesgo_quiebre_jev = a.stockout_risk ? r2(a.stockout_risk.noul) : '';\n    fila.demanda_creciente_jev = a.real_demand_growth ? r2(a.real_demand_growth.noul) : '';\n    fila.riesgo_sobrestock_jev = a.overstock_risk ? r2(a.overstock_risk.noul) : '';\n    fila.modelo = r.body.model || '';\n    fila.tokens = (r.body.usage && r.body.usage.input_tokens) || '';\n    fila.creditos_restantes = (r.headers && (r.headers['x-credits-remaining'] || r.headers['x-tokens-remaining'])) || '';\n    fila.decidido_por = 'jev';\n    final = d.choice;\n    if (MENU.indexOf(final) < 0) {\n      fila.decidido_por = 'candado';\n      fila.motivo_candado = 'JEV devolvio una opcion fuera del menu (' + final + ').';\n      final = 'HUMAN_REVIEW';\n    } else if (!(d.confidence >= CONFIANZA_MINIMA)) {\n      const pctConf = Math.round((d.confidence || 0) * 100);\n      if (final === 'REORDER' || final === 'PRIORITIZE') {\n        fila.decidido_por = 'candado';\n        fila.motivo_candado = 'JEV eligio ' + final + ' con solo ' + pctConf + '% de confianza (minimo ' + (CONFIANZA_MINIMA * 100) + '% para gastar dinero). No se compra: lo decide una persona.';\n        final = 'HUMAN_REVIEW';\n      } else {\n        fila.motivo_candado = 'Confianza baja (' + pctConf + '%): decision de JEV mostrada tal cual porque no gasta dinero.';\n      }\n    }\n  }\n\n  let accion = ACCION[final];\n  let orden = null;\n  if (final === 'REORDER' || final === 'PRIORITIZE') {\n    if (calc.orden_abierta_unidades > 0) {\n      accion = 'NO_DUPLICA_ORDEN';\n      fila.decidido_por = 'candado';\n      fila.motivo_candado = 'JEV pidio ' + final + ', pero ya hay una orden abierta de ' + calc.orden_abierta_unidades + ' unidades de este producto. No se duplica.';\n    } else {\n      fila.cantidad_sugerida = calc.cantidad_sugerida;\n      fila.costo_orden = calc.costo_orden;\n      orden = {\n        fecha: contexto.fecha, corrida_id: contexto.corrida_id, sku: calc.sku, producto: calc.producto,\n        proveedor: calc.proveedor, cantidad: calc.cantidad_sugerida, costo_unitario: calc.costo_unitario,\n        costo_total: calc.costo_orden, prioridad: final === 'PRIORITIZE' ? 'alta' : 'normal', estado: 'borrador',\n        decision_origen: final + ' ' + Math.round((fila.confianza_jev || 0) * 100) + '% (' + fila.decidido_por + ')'\n      };\n    }\n  }\n  fila.accion_n8n = accion;\n  return { fila, orden, calc, final };\n}\nreturn { json: interpretarDecision($json, null, { fecha: $json.fecha_corrida, corrida_id: $json.corrida_id }) };"
+      }
+    },
+    {
+      "id": "af494b45-ca05-483e-b5e3-ec368221a035",
+      "name": "prepara_bitacora",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Una fila por producto en la pestana decisiones: que recibio JEV, que decidio y que hizo n8n.\nconst COLUMNAS = [\"fecha\",\"corrida_id\",\"sku\",\"producto\",\"datos_enviados_a_jev\",\"decision_jev\",\"confianza_jev\",\"probabilidades_jev\",\"urgencia_jev\",\"riesgo_quiebre_jev\",\"demanda_creciente_jev\",\"riesgo_sobrestock_jev\",\"accion_n8n\",\"decidido_por\",\"motivo_candado\",\"cantidad_sugerida\",\"costo_orden\",\"modelo\",\"tokens\",\"creditos_restantes\"];\nconst values = $input.all().map(i => COLUMNAS.map(k => { const v = i.json.fila[k]; return v === undefined || v === null ? '' : v; }));\nreturn values.length ? [{ json: { values } }] : [];"
+      }
+    },
+    {
+      "id": "d36ec0a2-bdfd-4013-aa34-f7053e2a7f3e",
+      "name": "guarda_bitacora",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('config').first().json.sheet_id }}/values/decisiones!A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: $json.values }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "7f8b2ace-dee1-4fe0-a6c8-e72c351bee45",
+      "name": "prepara_ordenes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Solo los productos donde la decision final fue comprar generan un borrador de orden.\nconst COLUMNAS = [\"fecha\",\"corrida_id\",\"sku\",\"producto\",\"proveedor\",\"cantidad\",\"costo_unitario\",\"costo_total\",\"prioridad\",\"estado\",\"decision_origen\"];\nconst values = $input.all().filter(i => i.json.orden).map(i => COLUMNAS.map(k => { const v = i.json.orden[k]; return v === undefined || v === null ? '' : v; }));\nreturn values.length ? [{ json: { values } }] : [];"
+      }
+    },
+    {
+      "id": "4869e5f0-025d-4cfc-9c90-1dc6ac6f6b43",
+      "name": "crea_ordenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('config').first().json.sheet_id }}/values/ordenes_compra!A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: $json.values }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "5f59b9d1-eaba-45c9-8692-b13ebf2c42ae",
+      "name": "arma_mensajes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        500
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Arma el resumen de la corrida y un aviso aparte por cada producto que necesita a una persona.\nfunction armarMensajes(resultados, contexto) {\n  const esc = s => String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const pct = v => (v === '' || v === null || v === undefined) ? 's/d' : Math.round(Number(v) * 100) + '%';\n  const urg = v => (v === '' || v === null || v === undefined) ? 's/d' : Number(v).toFixed(1);\n  const usd = v => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n  const NOMBRE = { PRIORITIZE: 'PRIORIZAR', REORDER: 'REABASTECER', HUMAN_REVIEW: 'REVISION HUMANA', ALERT: 'ALERTA', WAIT: 'ESPERAR' };\n  const ICONO = { PRIORITIZE: '🔴', REORDER: '🟢', HUMAN_REVIEW: '🟠', ALERT: '🟡', WAIT: '⚪' };\n  const ORDEN = ['PRIORITIZE', 'REORDER', 'HUMAN_REVIEW', 'ALERT', 'WAIT'];\n\n  const hechos = c => {\n    const h = c.resumen_hechos;\n    if (!h) return '';\n    const partes = ['stock ' + h.stock];\n    if (h.pendientes) partes.push(h.pendientes + (h.pendientes === 1 ? ' cliente esperando' : ' clientes esperando'));\n    if (h.en_camino) partes.push(h.en_camino + ' en camino (' + h.llegada_dias + ' d)');\n    partes.push('vende ' + h.v7 + '/dia');\n    if (h.tendencia !== null) partes.push('tendencia ' + (h.tendencia > 0 ? '+' : '') + h.tendencia + '%');\n    partes.push('proveedor ' + h.reposicion + ' d');\n    if (h.ceros >= 3) partes.push(h.ceros + ' dias sin vender');\n    if (h.pico) partes.push('pico de ' + h.pico + ' en un dia');\n    return partes.join(' · ');\n  };\n  const porque = f => 'quiebre ' + pct(f.riesgo_quiebre_jev) + ' · demanda real al alza ' + pct(f.demanda_creciente_jev) + ' · sobrestock ' + pct(f.riesgo_sobrestock_jev);\n\n  const lista = resultados.slice().sort((a, b) => {\n    const d = ORDEN.indexOf(a.final) - ORDEN.indexOf(b.final);\n    return d !== 0 ? d : (Number(b.fila.urgencia_jev) || 0) - (Number(a.fila.urgencia_jev) || 0);\n  });\n\n  let t = '<b>JEV decidio · inventario ' + esc(contexto.fecha.slice(0, 10)) + '</b>\\n';\n  const frenados = resultados.filter(x => x.fila.decidido_por === 'candado_datos').length;\n  const sinRespuesta = resultados.filter(x => x.fila.decision_jev === 'SIN_RESPUESTA').length;\n  const consultados = resultados.length - frenados - sinRespuesta;\n  t += consultados + (consultados === 1 ? ' producto decidido por JEV' : ' productos decididos por JEV');\n  if (sinRespuesta) t += ' · ' + sinRespuesta + ' sin respuesta de JEV';\n  if (frenados) t += ' · ' + frenados + ' frenado(s) por datos';\n  t += '\\n';\n  let grupo = '';\n  for (const x of lista) {\n    const f = x.fila;\n    if (x.final !== grupo) { grupo = x.final; t += '\\n' + ICONO[grupo] + ' <b>' + NOMBRE[grupo] + '</b>\\n'; }\n    if (f.decidido_por === 'candado_datos') { t += '• ' + esc(f.producto) + ': dato roto, no se consulto a JEV\\n'; continue; }\n    t += '• <b>' + esc(f.producto) + '</b>';\n    if (f.decidido_por === 'jev') t += ' · ' + pct(f.confianza_jev) + (Number(f.confianza_jev) < 0.6 ? ' (confianza baja)' : '') + ' · urgencia ' + urg(f.urgencia_jev) + '/4';\n    else if (f.decision_jev === 'SIN_RESPUESTA') t += ' · JEV no respondio, lo decide una persona';\n    else t += ' · JEV dijo ' + esc(NOMBRE[f.decision_jev] || f.decision_jev) + (f.confianza_jev !== '' ? ' ' + pct(f.confianza_jev) : '') + ', candado de n8n';\n    t += '\\n   ' + esc(porque(f));\n    if (x.orden) t += '\\n   → orden borrador ' + x.orden.cantidad + ' u · ' + usd(x.orden.costo_total);\n    if (f.accion_n8n === 'NO_DUPLICA_ORDEN') t += '\\n   → ya hay una orden abierta, no se duplica';\n    t += '\\n';\n  }\n  const conCreditos = resultados.filter(x => x.fila.creditos_restantes !== '');\n  if (conCreditos.length) t += '\\nCreditos JEV restantes: ' + conCreditos[conCreditos.length - 1].fila.creditos_restantes;\n  if (t.length > 3900) t = t.slice(0, 3880) + '\\n…(ver pestana decisiones)';\n\n  const mensajes = [{ texto: t }];\n\n  for (const x of lista) {\n    const f = x.fila;\n    if (x.final !== 'HUMAN_REVIEW' && x.final !== 'ALERT') continue;\n    let m = ICONO[x.final] + ' <b>' + NOMBRE[x.final] + ': ' + esc(f.producto) + '</b> (' + esc(f.sku) + ')\\n';\n    if (f.decidido_por === 'candado_datos') {\n      m += '\\nNo se consulto a JEV porque los datos no son confiables:\\n' + esc(x.calc.motivo_invalido) + '\\n\\nQue hacer: corregir la fila en la hoja y volver a correr el analisis.';\n    } else {\n      m += '\\n' + esc(hechos(x.calc)) + '\\n';\n      if (f.decidido_por === 'jev') m += '\\nJEV decidio ' + NOMBRE[x.final] + ' con ' + pct(f.confianza_jev) + ' de confianza' + (Number(f.confianza_jev) < 0.6 ? ' (baja)' : '') + ' (urgencia ' + urg(f.urgencia_jev) + '/4).\\n';\n      else m += '\\nCandado de n8n: ' + esc(f.motivo_candado) + '\\n';\n      if (f.decision_jev !== 'SIN_RESPUESTA') m += 'Por que: ' + esc(porque(f)) + '\\n';\n      m += x.final === 'ALERT'\n        ? '\\nNo se compra nada. Revisa que esta pasando con este producto.'\n        : '\\nNo se compro nada. Si decides comprar, el calculo de n8n sugiere ' + x.calc.cantidad_sugerida + ' u (' + usd(x.calc.costo_orden) + ').';\n    }\n    mensajes.push({ texto: m });\n  }\n  return mensajes;\n}\nconst res = $input.all().map(i => i.json);\nconst ctx = { fecha: res[0].fila.fecha, corrida_id: res[0].fila.corrida_id };\nreturn armarMensajes(res, ctx).map(m => ({ json: m }));"
+      }
+    },
+    {
+      "id": "dd56eca3-d32b-4ba9-a0de-49b285da6eb9",
+      "name": "avisa_telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        500
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('config').first().json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fa3a6b86-4538-451e-bbf0-bf0dfe7ae174",
+      "name": "Sticky Note fa3a6b86",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        -120
+      ],
+      "parameters": {
+        "content": "## 1. n8n CALCULA\nLee la hoja jev_inventario_demo (productos, ventas, proveedores, ordenes). Por producto calcula venta diaria, tendencia, dias de inventario, pedidos de clientes, stock en camino, tiempo del proveedor y la cantidad a pedir. Si un dato es imposible (ej. stock negativo) lo frena SIN consultar a JEV. La columna historia_demo nunca se manda a JEV.",
+        "color": 4,
+        "width": 560,
+        "height": 200
+      }
+    },
+    {
+      "id": "4c73e6b9-aa66-4fa9-8f9d-f5fa4aaae68d",
+      "name": "Sticky Note 4c73e6b9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -120
+      ],
+      "parameters": {
+        "content": "## 2. JEV DECIDE\nUna consulta por producto (modelo jev-1.13.0). Menu fijo: REORDER, PRIORITIZE, WAIT, ALERT, HUMAN_REVIEW + urgencia (1-4) + 3 senales: riesgo de quiebre, demanda real al alza, riesgo de sobrestock. JEV no escribe texto: el por que son sus propias probabilidades.",
+        "color": 5,
+        "width": 460,
+        "height": 200
+      }
+    },
+    {
+      "id": "4f7054ad-5349-4005-85b0-b1038cf42795",
+      "name": "Sticky Note 4f7054ad",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -120
+      ],
+      "parameters": {
+        "content": "## 3. n8n VALIDA y EJECUTA\nCandados: compra (REORDER/PRIORITIZE) con confianza < 60% -> revision humana, las demas decisiones se muestran tal cual con nota de confianza baja; opcion fuera del menu -> humana; JEV sin respuesta -> humana; ya hay orden abierta -> no duplica. Luego: bitacora (pestana decisiones), borradores de compra (ordenes_compra) y Telegram.",
+        "color": 6,
+        "width": 560,
+        "height": 200
+      }
+    },
+    {
+      "id": "config-0001",
+      "name": "config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        110,
+        90
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-0",
+              "name": "sheet_id",
+              "value": "PEGA_AQUI_EL_ID_DE_TU_HOJA_DE_GOOGLE_SHEETS",
+              "type": "string"
+            },
+            {
+              "id": "cfg-1",
+              "name": "chat_id",
+              "value": "PEGA_AQUI_TU_CHAT_ID_DE_TELEGRAM",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "panel_inventario": {
+      "main": [
+        [
+          {
+            "node": "config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lee_hoja": {
+      "main": [
+        [
+          {
+            "node": "calcula_variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "calcula_variables": {
+      "main": [
+        [
+          {
+            "node": "datos_validos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "datos_validos": {
+      "main": [
+        [
+          {
+            "node": "pregunta_a_jev",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "frena_dato_invalido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pregunta_a_jev": {
+      "main": [
+        [
+          {
+            "node": "interpreta_jev",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "interpreta_jev": {
+      "main": [
+        [
+          {
+            "node": "junta_resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "junta_resultados": {
+      "main": [
+        [
+          {
+            "node": "prepara_bitacora",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "prepara_ordenes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "arma_mensajes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "frena_dato_invalido": {
+      "main": [
+        [
+          {
+            "node": "junta_resultados",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "prepara_bitacora": {
+      "main": [
+        [
+          {
+            "node": "guarda_bitacora",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepara_ordenes": {
+      "main": [
+        [
+          {
+            "node": "crea_ordenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "arma_mensajes": {
+      "main": [
+        [
+          {
+            "node": "avisa_telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "config": {
+      "main": [
+        [
+          {
+            "node": "lee_hoja",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,142 @@
+{
+  "version": 3,
+  "scenario": "custom",
+  "model": "jev-latest",
+  "text": "{\"store\":\"Small online store selling phone accessories. The inventory manager wants a decision for ONE product today.\",\"analysis_date\":\"2026-09-29\",\"product\":{\"sku\":\"PROT-S24-VID\",\"name\":\"Protector de vidrio Galaxy S24\",\"category\":\"protectores\",\"unit_cost_usd\":0.7,\"unit_price_usd\":9.99,\"gross_margin_pct\":93},\"stock\":{\"on_hand\":20,\"pending_customer_orders_waiting\":26,\"available_after_pending_orders\":-6,\"incoming_units_from_supplier\":0,\"incoming_arrives_in_days\":null,\"open_purchase_order_units_not_yet_shipped\":0,\"inventory_value_at_cost_usd\":14},\"sales\":{\"daily_units_last_28_days_oldest_first\":[4,5,4,2,6,4,7,3,3,1,4,8,4,4,4,6,2,4,7,8,6,6,2,5,4,5,2,3],\"avg_per_day_last_7_days\":3.86,\"avg_per_day_previous_21_days\":4.57,\"trend_last_7_vs_previous_21_pct\":-16,\"median_day\":4,\"max_single_day\":8,\"max_day_date\":\"2026-09-12\",\"consecutive_zero_sales_days_until_yesterday\":0},\"supplier\":{\"name\":\"PowerLine Mexico\",\"country\":\"Mexico\",\"lead_time_days\":10,\"on_time_delivery_pct\":87,\"minimum_order_units\":100},\"planning_math_by_n8n\":{\"planning_rate_units_per_day\":4.14,\"planning_rate_method\":\"60% last 7 days + 40% previous 21 days\",\"days_of_cover_at_last_7_days_rate\":-1.6,\"days_of_cover_incl_incoming_at_planning_rate\":-1.4,\"incoming_arrives_before_a_new_order_could\":null,\"expected_demand_during_lead_time_units\":41,\"units_needed_to_cover_lead_time_plus_14_days\":106,\"order_size_if_ordering_today_units\":106,\"order_cost_if_ordering_today_usd\":74.2,\"days_of_stock_after_that_order\":24}}",
+  "questions": [
+    {
+      "name": "decision",
+      "type": "choice",
+      "question": "You are the inventory planner of this store. Decide what to do with this product today. Low stock alone does NOT mean reorder: weigh the demand trend, customers already waiting, incoming stock, supplier lead time and reliability, the minimum order size, the risk of excess inventory and any anomaly in the sales data.",
+      "options": [
+        {
+          "label": "REORDER",
+          "definition": "Place a normal replenishment order now: stock will run out around or before a new order could arrive, demand is healthy, and the order will not leave excessive inventory."
+        },
+        {
+          "label": "PRIORITIZE",
+          "definition": "Urgent replenishment that must be handled first today: customers are already waiting or a stockout is imminent or already happening while demand is real, so waiting would lose sales or customers."
+        },
+        {
+          "label": "WAIT",
+          "definition": "Do not order now: available plus incoming stock covers demand until a later order could arrive, or demand is falling so an order would likely create excess stock."
+        },
+        {
+          "label": "ALERT",
+          "definition": "No purchase, but a person should look at it: excess inventory tying up money, or abnormal sales behaviour while stock is available (for example sales suddenly stopped)."
+        },
+        {
+          "label": "HUMAN_REVIEW",
+          "definition": "Ambiguous or high-risk: signals conflict, demand may be a one-off spike or a data error, or an expensive order would rest on uncertain demand. A person must decide before buying."
+        }
+      ]
+    },
+    {
+      "name": "urgency",
+      "type": "score",
+      "question": "How urgent is it to act on this product?",
+      "options": [
+        {
+          "label": "none",
+          "definition": "nothing to do this week"
+        },
+        {
+          "label": "low",
+          "definition": "review within the week"
+        },
+        {
+          "label": "high",
+          "definition": "act within 1-2 days"
+        },
+        {
+          "label": "critical",
+          "definition": "act today, sales or customers are being lost"
+        }
+      ]
+    },
+    {
+      "name": "stockout_risk",
+      "type": "noul",
+      "question": "Will this product be unable to serve customers before a new order placed today could arrive (considering customers already waiting and incoming units)?",
+      "options": [
+        {
+          "label": "Yes",
+          "definition": ""
+        },
+        {
+          "label": "No",
+          "definition": ""
+        }
+      ]
+    },
+    {
+      "name": "real_demand_growth",
+      "type": "noul",
+      "question": "Is genuine customer demand for this product growing, and not just a one-off spike, a data error or an effect of being out of stock?",
+      "options": [
+        {
+          "label": "Yes",
+          "definition": ""
+        },
+        {
+          "label": "No",
+          "definition": ""
+        }
+      ]
+    },
+    {
+      "name": "overstock_risk",
+      "type": "noul",
+      "question": "If the store placed the order described in planning_math_by_n8n today, would it likely end up with excess inventory (well over 60 days of sales) or money tied up in slow stock?",
+      "options": [
+        {
+          "label": "Yes",
+          "definition": ""
+        },
+        {
+          "label": "No",
+          "definition": ""
+        }
+      ]
+    }
+  ],
+  "request": {
+    "state": "{\"store\":\"Small online store selling phone accessories. The inventory manager wants a decision for ONE product today.\",\"analysis_date\":\"2026-09-29\",\"product\":{\"sku\":\"PROT-S24-VID\",\"name\":\"Protector de vidrio Galaxy S24\",\"category\":\"protectores\",\"unit_cost_usd\":0.7,\"unit_price_usd\":9.99,\"gross_margin_pct\":93},\"stock\":{\"on_hand\":20,\"pending_customer_orders_waiting\":26,\"available_after_pending_orders\":-6,\"incoming_units_from_supplier\":0,\"incoming_arrives_in_days\":null,\"open_purchase_order_units_not_yet_shipped\":0,\"inventory_value_at_cost_usd\":14},\"sales\":{\"daily_units_last_28_days_oldest_first\":[4,5,4,2,6,4,7,3,3,1,4,8,4,4,4,6,2,4,7,8,6,6,2,5,4,5,2,3],\"avg_per_day_last_7_days\":3.86,\"avg_per_day_previous_21_days\":4.57,\"trend_last_7_vs_previous_21_pct\":-16,\"median_day\":4,\"max_single_day\":8,\"max_day_date\":\"2026-09-12\",\"consecutive_zero_sales_days_until_yesterday\":0},\"supplier\":{\"name\":\"PowerLine Mexico\",\"country\":\"Mexico\",\"lead_time_days\":10,\"on_time_delivery_pct\":87,\"minimum_order_units\":100},\"planning_math_by_n8n\":{\"planning_rate_units_per_day\":4.14,\"planning_rate_method\":\"60% last 7 days + 40% previous 21 days\",\"days_of_cover_at_last_7_days_rate\":-1.6,\"days_of_cover_incl_incoming_at_planning_rate\":-1.4,\"incoming_arrives_before_a_new_order_could\":null,\"expected_demand_during_lead_time_units\":41,\"units_needed_to_cover_lead_time_plus_14_days\":106,\"order_size_if_ordering_today_units\":106,\"order_cost_if_ordering_today_usd\":74.2,\"days_of_stock_after_that_order\":24}}",
+    "model": "jev-latest",
+    "questions": {
+      "decision": {
+        "type": "choice",
+        "instructions": "You are the inventory planner of this store. Decide what to do with this product today. Low stock alone does NOT mean reorder: weigh the demand trend, customers already waiting, incoming stock, supplier lead time and reliability, the minimum order size, the risk of excess inventory and any anomaly in the sales data.",
+        "criteria": {
+          "REORDER": "Place a normal replenishment order now: stock will run out around or before a new order could arrive, demand is healthy, and the order will not leave excessive inventory.",
+          "PRIORITIZE": "Urgent replenishment that must be handled first today: customers are already waiting or a stockout is imminent or already happening while demand is real, so waiting would lose sales or customers.",
+          "WAIT": "Do not order now: available plus incoming stock covers demand until a later order could arrive, or demand is falling so an order would likely create excess stock.",
+          "ALERT": "No purchase, but a person should look at it: excess inventory tying up money, or abnormal sales behaviour while stock is available (for example sales suddenly stopped).",
+          "HUMAN_REVIEW": "Ambiguous or high-risk: signals conflict, demand may be a one-off spike or a data error, or an expensive order would rest on uncertain demand. A person must decide before buying."
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgent is it to act on this product?",
+        "criteria": [
+          "none: nothing to do this week",
+          "low: review within the week",
+          "high: act within 1-2 days",
+          "critical: act today, sales or customers are being lost"
+        ]
+      },
+      "stockout_risk": {
+        "type": "noul",
+        "instructions": "Will this product be unable to serve customers before a new order placed today could arrive (considering customers already waiting and incoming units)?"
+      },
+      "real_demand_growth": {
+        "type": "noul",
+        "instructions": "Is genuine customer demand for this product growing, and not just a one-off spike, a data error or an effect of being out of stock?"
+      },
+      "overstock_risk": {
+        "type": "noul",
+        "instructions": "If the store placed the order described in planning_math_by_n8n today, would it likely end up with excess inventory (well over 60 days of sales) or money tied up in slow stock?"
+      }
+    }
+  }
+}
