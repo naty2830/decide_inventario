@@ -1,58 +1,105 @@
-# Instalación (de cero a la primera corrida)
+# Instalación, paso a paso
 
-> ⚠️ **BORRADOR.** Los flujos JSON ya existen, pero esta guía todavía no se ha probado completa importándolos en un n8n limpio.
+Esta guía te lleva de cero a tu primera decisión. No necesitas saber programar. Si algo no se entiende, es un error de la guía: abre un *issue* y la mejoramos.
 
-Tiempo estimado: 45 a 60 minutos la primera vez. No necesitas saber programar.
+**Tiempo:** unos 45 a 60 minutos la primera vez.
+**Costo:** una consulta a JEV por producto, unos 1.400 créditos cada una. Para probar basta con **un** producto.
 
-## Paso 0. Comprueba que el código funciona (sin cuentas, sin costo)
+Si una palabra no la conoces, mira el [glosario](GLOSARIO.md).
 
-Instala [Node.js](https://nodejs.org) (versión 18 o más nueva), descarga este repositorio y, dentro de su carpeta:
+## Lo que vas a tener al final
+
+```
+Formulario en n8n -> n8n calcula -> JEV decide -> n8n valida y ejecuta:
+                                                  - una fila en tu hoja de Google (bitácora)
+                                                  - un borrador de orden de compra (si aplica)
+                                                  - un aviso en tu Telegram
+```
+
+## Antes de empezar: lo que necesitas
+
+| Qué | Para qué | Dónde se consigue |
+|---|---|---|
+| Un n8n (versión 1.x) | Es donde corre todo | n8n Cloud en <https://n8n.io> (de pago, el más fácil) o instalado por ti: <https://docs.n8n.io/hosting/> |
+| Una cuenta de Google | La hoja de cálculo | Tu cuenta de siempre |
+| Un bot de Telegram | Recibir los avisos | Se crea gratis en el paso 1 |
+| Una cuenta de JEV con créditos | Toma las decisiones | <https://jevmodel.org> |
+| Node.js 18 o más nuevo (opcional) | Solo para el paso 0 | <https://nodejs.org> |
+
+## Paso 0 (opcional). Comprueba que el código funciona
+
+No necesita cuentas ni créditos. Con Node.js instalado, dentro de la carpeta del proyecto:
 
 ```bash
 npm test
 ```
 
-Debe terminar con `TODAS LAS PRUEBAS OK`. Esto prueba la lógica de cálculo y los candados, sin internet.
+Debe terminar con `TODAS LAS PRUEBAS OK`.
 
-## Paso 1. Ten un n8n
+## Paso 1. Guarda las credenciales en n8n
 
-Sirve cualquier n8n 1.x, en tu computadora o en un servidor. Guía oficial: <https://docs.n8n.io/hosting/>.
+Las credenciales son las llaves de tus cuentas. Se guardan **solo** dentro de n8n (menú **Credentials**), nunca en los flujos ni en este repositorio.
 
-## Paso 2. Consigue una llave de JEV
+**a) JEV.** Crea una llave en <https://jevmodel.org>. En n8n: **Credentials → Add credential → Header Auth**. Ponle de nombre `jev`. En *Name* escribe `Authorization`. En *Value* escribe la palabra Bearer, un espacio y tu llave.
 
-1. Crea una cuenta en <https://jevmodel.org> y genera una API key.
-2. Ten créditos: una corrida completa de 11 productos gastó unos 15.300. Con un solo producto, unos 1.400.
-3. En n8n: **Credentials → Add credential → Header Auth**. Nombre: `jev_api`. Header: `Authorization`. Valor: `Bearer ` seguido de tu llave.
+**b) Google Sheets.** **Add credential → Google Sheets OAuth2 API**. Sigue la guía oficial de n8n: <https://docs.n8n.io/integrations/builtin/credentials/google/>. Es el paso más largo. Con n8n Cloud suele bastar con pulsar *Sign in with Google*.
 
-> La llave solo va en n8n. Nunca la pegues en un nodo, en este repositorio ni en un chat.
+**c) Telegram.** En Telegram busca **@BotFather**, escribe `/newbot`, ponle nombre y copia el token que te da. En n8n: **Add credential → Telegram API** y pega el token. Luego escríbele cualquier mensaje a tu bot: sin eso no puede escribirte.
 
-## Paso 3. Crea tu bot de Telegram
+## Paso 2. Averigua tu chat id de Telegram
 
-1. En Telegram, habla con **@BotFather**, escribe `/newbot` y guarda el token.
-2. En n8n: **Credentials → Telegram API** con ese token. Nombre: `telegram_inventario`.
-3. Escríbele un mensaje a tu bot y averigua tu *chat id* (el nodo Telegram Trigger de n8n lo muestra al recibir un mensaje).
+Es el número que dice a quién se le envían los avisos. Una forma sencilla: en Telegram habla con **@userinfobot** y te responde con tu `Id`. Anótalo.
 
-## Paso 4. Prepara Google Sheets
+## Paso 3. Crea la hoja de ejemplo
 
-1. En n8n, conecta una credencial **Google Sheets OAuth2** (guía de n8n: <https://docs.n8n.io/integrations/builtin/credentials/google/>).
-2. Importa `workflows/inventario_crea_hoja.json` y córrelo **una vez a mano**. Crea la hoja `jev_inventario_demo` con 5 pestañas (productos, ventas, proveedores, decisiones, ordenes_compra) y datos ficticios con fechas hasta ayer.
-3. Copia el ID de la hoja: es la parte larga de su URL, entre `/d/` y `/edit`.
+1. En n8n: **Workflows → Create workflow**. Arriba a la derecha, el menú de tres puntos → **Import from file…** y elige `workflows/inventario_crea_hoja.json`.
+2. Abre los nodos que usan Google (`crea_hoja`, `escribe_datos`, `da_formato`) y elige tu credencial de **Google Sheets** si el nodo no la trae.
+3. Pulsa **Execute workflow**. Se crea en tu Google Drive una hoja llamada `jev_inventario_demo` con 5 pestañas y datos ficticios.
+4. Abre la hoja y copia su **ID**: es la parte larga de la dirección, entre `/d/` y `/edit`.
 
-## Paso 5. Importa el flujo principal
+**Cómo saber que salió bien:** en tu Drive aparece la hoja con las pestañas `productos` (12 filas), `ventas`, `proveedores`, `decisiones` y `ordenes_compra` (estas dos últimas solo con encabezados).
 
-1. Importa `workflows/inventario_jev_decide.json` (en n8n: menú de tres puntos → Import from file). No trae horario automático: se corre desde su formulario.
-2. Abre el nodo `config` (el primero después del formulario) y reemplaza los dos textos que dicen PEGA_AQUI por **tu** ID de hoja y **tu** chat id de Telegram. Es el único lugar donde van tus datos.
-3. En los nodos que lo piden (`lee_hoja`, `guarda_bitacora`, `crea_ordenes`: Google Sheets; `pregunta_a_jev`: Header Auth; `avisa_telegram`: Telegram), elige **tus** credenciales. El JSON no trae ninguna.
-4. **No lo actives todavía.** Actívalo solo cuando quieras que corra solo (ver [USO.md](USO.md)).
+## Paso 4. Importa y configura el flujo principal
 
-## Paso 6. Primera corrida
+1. Importa `workflows/inventario_jev_decide.json` igual que antes.
+2. Abre el nodo **config**. Reemplaza los dos textos `PEGA_AQUI…`:
+   - `sheet_id`: el ID de la hoja del paso 3.
+   - `chat_id`: tu chat id del paso 2.
 
-Ejecuta el flujo a mano con **un solo producto** (unos 1.400 créditos). Verifica en la hoja (pestaña `decisiones`) que apareció una fila y en Telegram que llegó el aviso. Una ejecución verde no basta: **mira el dato**.
+   Es el único lugar donde van tus datos.
+3. Elige **tus** credenciales en los nodos que las piden:
+   - `lee_hoja`, `guarda_bitacora` y `crea_ordenes`: Google Sheets.
+   - `pregunta_a_jev`: la credencial `jev`.
+   - `avisa_telegram`: tu credencial de Telegram.
+4. Guarda el flujo (Ctrl+S). **No lo publiques todavía**: no hace falta para probar.
 
-## Paso 7 (recomendado). Avisos de error
+## Paso 5. Primera corrida, con un solo producto
 
-Importa `workflows/inventario_errores.json`, pon tu chat id en su nodo `config` y elige tu credencial de Telegram, publícalo y elígelo como *Error Workflow* en los ajustes de los otros flujos. Así, si algo falla, te llega un aviso a Telegram. Ver [PROBLEMAS_CONOCIDOS.md](PROBLEMAS_CONOCIDOS.md).
+1. Pulsa **Execute workflow**. n8n deja el formulario de prueba esperando.
+2. Abre el formulario (n8n te muestra su enlace; termina en `/form-test/inventario-jev`). En **Solo este SKU** escribe `CAR-GAN-65` y pulsa **Analizar**. Responde que el análisis está en marcha.
+3. En menos de un minuto debería llegarte un aviso por Telegram.
+
+**Cómo saber que salió bien (mira el dato, no solo el color verde):**
+- En tu hoja, pestaña `decisiones`, hay **una fila nueva** para `CAR-GAN-65` con la decisión, la confianza y las probabilidades de JEV.
+- Te llegó el aviso a Telegram.
+
+**Ejemplo de una prueba real:** JEV eligió `PRIORITIZE` con 57% de confianza. Como es menos del 60%, el candado de n8n lo frenó: la columna `decidido_por` dice `candado`, no se creó orden de compra y el motivo quedó escrito. Es el comportamiento esperado. La decisión puede variar entre corridas, porque la toma el modelo.
+
+## Paso 6 (recomendado). Avisos cuando algo falla
+
+1. Importa `workflows/inventario_errores.json`.
+2. En su nodo `config` pon tu chat id y elige tu credencial de Telegram.
+3. Publícalo. Luego, en el flujo principal: menú de tres puntos → **Settings** → **Error workflow** → elige `inventario_errores`.
+
+Desde ahí, si el flujo falla en una ejecución normal, te llega un aviso a Telegram con el nodo que falló y una pista de qué revisar.
+
+## Paso 7 (opcional). Todo el inventario
+
+Ejecuta el flujo y deja **vacío** el campo SKU: analiza los 12 productos. Gasta unos 15.000 créditos y tarda unos minutos, porque las consultas a JEV se envían de una en una a propósito (ver [problemas conocidos](PROBLEMAS_CONOCIDOS.md)).
+
+Para volver a empezar con datos limpios usa `workflows/inventario_reinicia_demo.json` (pon el ID de tu hoja en su nodo `config`): borra decisiones y órdenes y repone los datos de ejemplo con fechas de hoy. No gasta créditos.
 
 ## Si te atoras
 
-Abre un *issue* diciendo el paso y el mensaje de error (sin pegar llaves ni tokens). Ese reporte mejora esta guía.
+- Mira [PROBLEMAS_CONOCIDOS.md](PROBLEMAS_CONOCIDOS.md).
+- Abre un *issue* diciendo en qué paso estás y qué mensaje sale. **No pegues llaves ni tokens.**

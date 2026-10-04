@@ -7,7 +7,7 @@ Intenciones, no promesas. Es un proyecto pequeño con una sola persona detrás.
 - [x] Configuración en un solo lugar (nodo `config`).
 - [x] Sin horario diario por defecto.
 - [ ] Capturas sin datos personales.
-- [ ] Instalación probada desde cero en un n8n limpio.
+- [ ] Instalación probada de punta a punta por una persona distinta de la autora (hecha parcialmente: ver README).
 
 ## Después
 - [ ] Prueba automática que verifique que el código de los flujos coincide con `src/`.

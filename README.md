@@ -69,7 +69,7 @@ Sheets y Telegram está en el [ROADMAP](ROADMAP.md).
 
 ## Empezar
 
-1. [docs/INSTALACION.md](docs/INSTALACION.md): de cero a primera corrida.
+1. [docs/INSTALACION.md](docs/INSTALACION.md): de cero a primera corrida. Si una palabra no la conoces, está en el [glosario](docs/GLOSARIO.md).
 2. [docs/USO.md](docs/USO.md): cómo usarlo día a día.
 3. [docs/COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md): para entenderlo y modificarlo.
 
@@ -84,7 +84,7 @@ npm test
 - Probado **por su autora** con datos ficticios: una corrida completa de 11 productos, una falla provocada a propósito (llave inválida) y una alerta real de error.
 - La decisión coincide dentro de n8n y en el Playground de JEV (diferencias de 1-2 puntos porcentuales).
 - No se ha usado con datos reales de un negocio ni por otras personas.
-- Los flujos en `workflows/` se generaron a partir de los que se probaron, sin credenciales ni datos personales. Falta probar la instalación completa importándolos en un n8n limpio.
+- Los flujos de `workflows/` se importaron en un n8n real y se probó: crear la hoja de ejemplo y analizar un producto, con su fila en la bitácora. Quedan sin probar por importación los flujos `inventario_errores` e `inventario_reinicia_demo` y el paso de elegir las credenciales a mano en un n8n distinto al de su autora.
 
 ## Autoría
 
